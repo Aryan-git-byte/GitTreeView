@@ -208,8 +208,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Project Maintainer**: Your Name
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Email: your.email@example.com
+- GitHub: [@aryan-git-byte](https://github.com/aryan-git-byte)
+- Email: aryan17550@gmail.com
 
 ## 🙏 Acknowledgments
 
