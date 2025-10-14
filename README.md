@@ -10,7 +10,7 @@
 
 **A beautiful, interactive web application to visualize and explore the complete directory structure of any public GitHub repository.**
 
-[Live Demo](#) • [Features](#-features) • [Getting Started](#-getting-started) • [Usage](#-usage) • [Tech Stack](#-tech-stack)
+[Live Demo](https://git-tree-view-gamma.vercel.app/) • [Features](#-features) • [Getting Started](#-getting-started) • [Usage](#-usage) • [Tech Stack](#-tech-stack)
 
 </div>
 
