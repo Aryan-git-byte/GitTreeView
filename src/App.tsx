@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, FolderTree, File, Folder, GitBranch, Github, Check } from 'lucide-react';
+import { Copy, FolderTree, File, Folder, GitBranch, Github, Check, Lock, Unlock, Eye, EyeOff, Info, ShieldCheck } from 'lucide-react';
 
 interface TreeItem {
   path: string;
@@ -27,10 +27,14 @@ interface TreeNode {
 function App() {
   const [repoInput, setRepoInput] = useState('');
   const [branchInput, setBranchInput] = useState('main');
+  const [patToken, setPatToken] = useState('');
+  const [showPat, setShowPat] = useState(false);
+  const [showPatInput, setShowPatInput] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [treeData, setTreeData] = useState<TreeItem[]>([]);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [isPrivateRepo, setIsPrivateRepo] = useState(false);
 
   const fetchRepoStructure = async () => {
     if (!repoInput.trim()) {
@@ -41,20 +45,54 @@ function App() {
     setLoading(true);
     setError('');
     setTreeData([]);
+    setIsPrivateRepo(false);
 
     try {
+      const headers: HeadersInit = {
+        'Accept': 'application/vnd.github+json',
+      };
+
+      // Add authorization header if PAT is provided
+      if (patToken.trim()) {
+        headers['Authorization'] = `Bearer ${patToken.trim()}`;
+      }
+
       const response = await fetch(
-        `https://api.github.com/repos/${repoInput.trim()}/git/trees/${branchInput.trim() || 'main'}?recursive=1`
+        `https://api.github.com/repos/${repoInput.trim()}/git/trees/${branchInput.trim() || 'main'}?recursive=1`,
+        { headers }
       );
 
       if (!response.ok) {
         if (response.status === 404) {
-          throw new Error('Repository or branch not found');
+          if (!patToken.trim()) {
+            throw new Error('Repository or branch not found. If this is a private repository, please provide a Personal Access Token.');
+          }
+          throw new Error('Repository or branch not found. Please check the name and your PAT permissions.');
+        }
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Please check your Personal Access Token.');
+        }
+        if (response.status === 403) {
+          const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
+          if (rateLimitRemaining === '0') {
+            throw new Error('GitHub API rate limit exceeded. Please add a Personal Access Token for higher limits.');
+          }
+          throw new Error('Access forbidden. Please check your PAT permissions.');
         }
         throw new Error(`GitHub API error: ${response.status}`);
       }
 
       const data: GitHubTreeResponse = await response.json();
+
+      // Check if repo is private by trying to fetch repo info
+      const repoInfoResponse = await fetch(
+        `https://api.github.com/repos/${repoInput.trim()}`,
+        { headers }
+      );
+      if (repoInfoResponse.ok) {
+        const repoInfo = await repoInfoResponse.json();
+        setIsPrivateRepo(repoInfo.private || false);
+      }
 
       if (data.truncated) {
         setError('Warning: Repository is very large. Some files may not be shown.');
@@ -231,12 +269,12 @@ function App() {
             </h1>
           </div>
           <p className="text-slate-600">
-            Explore the structure of any public GitHub repository
+            Explore the structure of any public or private GitHub repository
           </p>
         </div>
 
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-          <div className="grid md:grid-cols-[2fr,1fr,auto] gap-4">
+          <div className="grid md:grid-cols-[2fr,1fr,auto] gap-4 mb-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Repository
@@ -292,6 +330,82 @@ function App() {
             </div>
           </div>
 
+          {/* PAT Section */}
+          <div className="pt-4 border-t border-slate-200">
+            <button
+              onClick={() => setShowPatInput(!showPatInput)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-blue-600 transition-colors mb-3"
+            >
+              {patToken.trim() ? (
+                <ShieldCheck className="w-4 h-4 text-green-600" />
+              ) : (
+                <Lock className="w-4 h-4" />
+              )}
+              <span>{showPatInput ? 'Hide' : 'Add'} Personal Access Token (for private repos)</span>
+              {patToken.trim() && (
+                <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+                  Authenticated
+                </span>
+              )}
+            </button>
+
+            {showPatInput && (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input
+                    type={showPat ? 'text' : 'password'}
+                    value={patToken}
+                    onChange={(e) => setPatToken(e.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    className="w-full pl-11 pr-12 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono text-sm"
+                  />
+                  <button
+                    onClick={() => setShowPat(!showPat)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    type="button"
+                  >
+                    {showPat ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex gap-2 mb-2">
+                    <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-blue-900">
+                      <p className="font-semibold mb-1">How to create a Personal Access Token:</p>
+                      <ol className="list-decimal list-inside space-y-1 text-blue-800">
+                        <li>Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)</li>
+                        <li>Click "Generate new token (classic)"</li>
+                        <li>Give it a descriptive name and select the <code className="bg-blue-100 px-1 rounded">repo</code> scope</li>
+                        <li>Copy the token and paste it above</li>
+                      </ol>
+                      <p className="mt-2 text-xs text-blue-700">
+                        <strong>Note:</strong> Your token is only stored in your browser's memory and never sent to any server except GitHub's API.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-lg p-3">
+                  <Unlock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium mb-1">Benefits of using a PAT:</p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      <li>Access private repositories</li>
+                      <li>Higher rate limits (5,000 requests/hour vs 60)</li>
+                      <li>Access organization repositories</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {error && (
             <div className="mt-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
               {error}
@@ -310,6 +424,12 @@ function App() {
                 <span className="text-sm text-slate-500">
                   ({treeData.length} items)
                 </span>
+                {isPrivateRepo && (
+                  <span className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded-full">
+                    <Lock className="w-3 h-3" />
+                    Private
+                  </span>
+                )}
               </div>
               <button
                 onClick={() => copyToClipboard(formatTreeAsText(), 'all')}
@@ -352,11 +472,11 @@ function App() {
               </li>
               <li className="flex gap-3">
                 <span className="font-bold text-blue-600 flex-shrink-0">3.</span>
-                <span>Click <strong>Fetch</strong> to load structure</span>
+                <span><strong>Optional:</strong> Add your Personal Access Token for private repos</span>
               </li>
               <li className="flex gap-3">
                 <span className="font-bold text-blue-600 flex-shrink-0">4.</span>
-                <span>View complete tree with all folders expanded</span>
+                <span>Click <strong>Fetch</strong> to load structure</span>
               </li>
               <li className="flex gap-3">
                 <span className="font-bold text-blue-600 flex-shrink-0">5.</span>
@@ -377,15 +497,15 @@ function App() {
               </li>
               <li className="flex gap-3">
                 <span className="text-blue-600 flex-shrink-0">•</span>
+                <span><strong>Private Repos:</strong> Access your private repositories with PAT</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-600 flex-shrink-0">•</span>
                 <span><strong>Documentation:</strong> Generate directory structures for docs</span>
               </li>
               <li className="flex gap-3">
                 <span className="text-blue-600 flex-shrink-0">•</span>
                 <span><strong>Collaboration:</strong> Share file paths with team members</span>
-              </li>
-              <li className="flex gap-3">
-                <span className="text-blue-600 flex-shrink-0">•</span>
-                <span><strong>Learning:</strong> Study project structure patterns</span>
               </li>
             </ul>
           </div>
