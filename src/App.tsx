@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, FolderTree, File, Folder, GitBranch, Github, Check, Lock, Unlock, Eye, EyeOff, Info, ShieldCheck } from 'lucide-react';
+import { Copy, FolderTree, File, Folder, GitBranch, Github, Check, Lock, Unlock, Eye, EyeOff, Info, ShieldCheck, Download, FileText } from 'lucide-react';
 
 interface TreeItem {
   path: string;
@@ -35,6 +35,12 @@ function App() {
   const [treeData, setTreeData] = useState<TreeItem[]>([]);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [isPrivateRepo, setIsPrivateRepo] = useState(false);
+  
+  // Export functionality state
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [exportOutput, setExportOutput] = useState('');
+  const [exportLoading, setExportLoading] = useState(false);
+  const [showExportPanel, setShowExportPanel] = useState(false);
 
   const fetchRepoStructure = async () => {
     if (!repoInput.trim()) {
@@ -46,13 +52,15 @@ function App() {
     setError('');
     setTreeData([]);
     setIsPrivateRepo(false);
+    setSelectedFiles(new Set());
+    setExportOutput('');
+    setShowExportPanel(false);
 
     try {
       const headers: HeadersInit = {
         'Accept': 'application/vnd.github+json',
       };
 
-      // Add authorization header if PAT is provided
       if (patToken.trim()) {
         headers['Authorization'] = `Bearer ${patToken.trim()}`;
       }
@@ -84,7 +92,6 @@ function App() {
 
       const data: GitHubTreeResponse = await response.json();
 
-      // Check if repo is private by trying to fetch repo info
       const repoInfoResponse = await fetch(
         `https://api.github.com/repos/${repoInput.trim()}`,
         { headers }
@@ -99,6 +106,7 @@ function App() {
       }
 
       setTreeData(data.tree);
+      setShowExportPanel(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch repository');
     } finally {
@@ -187,47 +195,132 @@ function App() {
     return output;
   };
 
+  const toggleFileSelection = (path: string) => {
+    const newSelected = new Set(selectedFiles);
+    if (newSelected.has(path)) {
+      newSelected.delete(path);
+    } else {
+      newSelected.add(path);
+    }
+    setSelectedFiles(newSelected);
+  };
+
+  const selectAllFiles = () => {
+    const allFiles = treeData.filter(item => item.type === 'blob').map(item => item.path);
+    setSelectedFiles(new Set(allFiles));
+  };
+
+  const deselectAllFiles = () => {
+    setSelectedFiles(new Set());
+  };
+
+  const generateExport = async () => {
+    if (selectedFiles.size === 0) {
+      setError('Please select at least one file to export');
+      return;
+    }
+
+    setExportLoading(true);
+    setError('');
+
+    const [owner, repo] = repoInput.trim().split('/');
+    let output = `<${repo}>\n`;
+
+    try {
+      for (const path of Array.from(selectedFiles)) {
+        let content;
+
+        if (patToken.trim()) {
+          const apiUrl = `https://api.github.com/repos/${repoInput.trim()}/contents/${path}?ref=${branchInput.trim() || 'main'}`;
+          const headers = {
+            'Accept': 'application/vnd.github+json',
+            'Authorization': `Bearer ${patToken.trim()}`
+          };
+
+          const response = await fetch(apiUrl, { headers });
+
+          if (!response.ok) {
+            output += `<${path}>:\nError fetching file\n\n`;
+            continue;
+          }
+
+          const data = await response.json();
+          content = atob(data.content);
+        } else {
+          const url = `https://raw.githubusercontent.com/${repoInput.trim()}/${branchInput.trim() || 'main'}/${path}`;
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            output += `<${path}>:\nError fetching file\n\n`;
+            continue;
+          }
+
+          content = await response.text();
+        }
+
+        output += `<${path}>:\n${content}\n\n`;
+      }
+
+      setExportOutput(output);
+    } catch (err) {
+      setError('Error fetching file contents: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const TreeView = () => {
     const tree = buildTreeStructure();
+    const files = treeData.filter(item => item.type === 'blob');
 
     const renderNode = (node: TreeNode, depth: number = 0, isLast: boolean = false, parentIsLast: boolean[] = []): JSX.Element => {
       const isFolder = node.type === 'folder';
+      const isSelected = selectedFiles.has(node.path);
 
       return (
         <div key={node.path}>
-          <div className="flex items-center gap-2 py-1 font-mono text-sm group hover:bg-slate-100 rounded px-2">
+          <div className="flex items-center gap-2 py-1.5 font-mono text-sm group hover:bg-gradient-to-r hover:from-emerald-50 hover:to-transparent rounded-lg px-2 transition-all duration-200">
             <div className="flex items-center" style={{ paddingLeft: `${depth * 24}px` }}>
               {depth > 0 && (
                 <div className="flex items-center">
                   {parentIsLast.map((last, i) => (
-                    <span key={i} className="text-slate-400" style={{ width: '24px' }}>
+                    <span key={i} className="text-slate-300" style={{ width: '24px' }}>
                       {!last ? '│' : ' '}
                     </span>
                   ))}
-                  <span className="text-slate-400">
+                  <span className="text-slate-300">
                     {isLast ? '└──' : '├──'}
                   </span>
                 </div>
               )}
             </div>
 
+            {!isFolder && showExportPanel && (
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => toggleFileSelection(node.path)}
+                className="w-4 h-4 accent-emerald-600 cursor-pointer"
+              />
+            )}
+
             {isFolder ? (
-              <Folder className="w-4 h-4 text-blue-500 flex-shrink-0 ml-1" />
+              <Folder className="w-4 h-4 text-amber-500 flex-shrink-0 ml-1" />
             ) : (
               <File className="w-4 h-4 text-slate-400 flex-shrink-0 ml-1" />
             )}
 
-            <span className="text-slate-700 flex-1">
+            <span className="text-slate-700 flex-1 font-medium">
               {node.name}
             </span>
 
             <button
               onClick={() => copyToClipboard(node.path, node.path)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 p-1"
+              className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 p-1 hover:bg-slate-100 rounded"
               title="Copy path"
             >
               {copiedPath === node.path ? (
-                <Check className="w-4 h-4 text-green-600" />
+                <Check className="w-4 h-4 text-emerald-600" />
               ) : (
                 <Copy className="w-4 h-4 text-slate-400 hover:text-slate-600" />
               )}
@@ -247,6 +340,53 @@ function App() {
 
     return (
       <div>
+        {showExportPanel && files.length > 0 && (
+          <div className="mb-4 p-4 bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 rounded-lg">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-slate-800">File Export</h3>
+                <span className="text-sm text-slate-600">
+                  ({selectedFiles.size} of {files.length} selected)
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={selectAllFiles}
+                  className="px-3 py-1.5 text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg transition-colors font-medium"
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={deselectAllFiles}
+                  className="px-3 py-1.5 text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg transition-colors font-medium"
+                >
+                  Deselect All
+                </button>
+                <button
+                  onClick={generateExport}
+                  disabled={exportLoading || selectedFiles.size === 0}
+                  className="px-4 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg transition-colors font-semibold shadow-sm disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {exportLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Generate Export
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600">
+              Select files to export their contents in a single formatted output. Checkboxes appear next to files below.
+            </p>
+          </div>
+        )}
         {tree.map((node, index) => renderNode(node, 0, index === tree.length - 1, []))}
       </div>
     );
@@ -259,24 +399,26 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50 to-blue-50">
+      <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="mb-8 text-center">
           <div className="flex items-center justify-center gap-3 mb-3">
-            <Github className="w-10 h-10 text-slate-700" />
-            <h1 className="text-4xl font-bold text-slate-800">
+            <div className="p-3 bg-gradient-to-br from-emerald-500 to-blue-600 rounded-2xl shadow-lg">
+              <Github className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-slate-800 via-emerald-700 to-blue-700">
               GitHub Tree Viewer
             </h1>
           </div>
-          <p className="text-slate-600">
-            Explore the structure of any public or private GitHub repository
+          <p className="text-lg text-slate-600 font-medium">
+            Explore, visualize, and export from any GitHub repository
           </p>
         </div>
 
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200/50 p-6 mb-6">
           <div className="grid md:grid-cols-[2fr,1fr,auto] gap-4 mb-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-slate-700 mb-2">
                 Repository
               </label>
               <div className="relative">
@@ -287,13 +429,13 @@ function App() {
                   onChange={(e) => setRepoInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchRepoStructure()}
                   placeholder="username/repository"
-                  className="w-full pl-11 pr-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full pl-11 pr-4 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-medium"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-slate-700 mb-2">
                 Branch
               </label>
               <div className="relative">
@@ -304,7 +446,7 @@ function App() {
                   onChange={(e) => setBranchInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchRepoStructure()}
                   placeholder="main"
-                  className="w-full pl-11 pr-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full pl-11 pr-4 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-medium"
                 />
               </div>
             </div>
@@ -313,7 +455,7 @@ function App() {
               <button
                 onClick={fetchRepoStructure}
                 disabled={loading}
-                className="w-full md:w-auto px-8 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium rounded-lg transition-colors shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full md:w-auto px-8 py-2.5 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 disabled:from-slate-300 disabled:to-slate-400 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-xl disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -330,21 +472,20 @@ function App() {
             </div>
           </div>
 
-          {/* PAT Section */}
-          <div className="pt-4 border-t border-slate-200">
+          <div className="pt-4 border-t-2 border-slate-100">
             <button
               onClick={() => setShowPatInput(!showPatInput)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-blue-600 transition-colors mb-3"
+              className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-emerald-600 transition-colors mb-3"
             >
               {patToken.trim() ? (
-                <ShieldCheck className="w-4 h-4 text-green-600" />
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
               ) : (
                 <Lock className="w-4 h-4" />
               )}
-              <span>{showPatInput ? 'Hide' : 'Add'} Personal Access Token (for private repos)</span>
+              <span>{showPatInput ? 'Hide' : 'Add'} Personal Access Token</span>
               {patToken.trim() && (
-                <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                  Authenticated
+                <span className="ml-2 px-3 py-1 bg-emerald-100 text-emerald-700 text-xs rounded-full font-bold">
+                  ✓ Authenticated
                 </span>
               )}
             </button>
@@ -358,7 +499,7 @@ function App() {
                     value={patToken}
                     onChange={(e) => setPatToken(e.target.value)}
                     placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                    className="w-full pl-11 pr-12 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono text-sm"
+                    className="w-full pl-11 pr-12 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-mono text-sm"
                   />
                   <button
                     onClick={() => setShowPat(!showPat)}
@@ -373,33 +514,21 @@ function App() {
                   </button>
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="bg-gradient-to-r from-blue-50 to-emerald-50 border-2 border-blue-200 rounded-xl p-4">
                   <div className="flex gap-2 mb-2">
                     <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                     <div className="text-sm text-blue-900">
-                      <p className="font-semibold mb-1">How to create a Personal Access Token:</p>
+                      <p className="font-bold mb-1">How to create a PAT:</p>
                       <ol className="list-decimal list-inside space-y-1 text-blue-800">
-                        <li>Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)</li>
+                        <li>GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)</li>
                         <li>Click "Generate new token (classic)"</li>
-                        <li>Give it a descriptive name and select the <code className="bg-blue-100 px-1 rounded">repo</code> scope</li>
-                        <li>Copy the token and paste it above</li>
+                        <li>Select the <code className="bg-blue-100 px-1.5 py-0.5 rounded font-mono">repo</code> scope</li>
+                        <li>Copy and paste the token above</li>
                       </ol>
-                      <p className="mt-2 text-xs text-blue-700">
-                        <strong>Note:</strong> Your token is only stored in your browser's memory and never sent to any server except GitHub's API.
+                      <p className="mt-2 text-xs text-blue-700 font-semibold">
+                        🔒 Your token is stored only in browser memory
                       </p>
                     </div>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-lg p-3">
-                  <Unlock className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium mb-1">Benefits of using a PAT:</p>
-                    <ul className="list-disc list-inside space-y-0.5">
-                      <li>Access private repositories</li>
-                      <li>Higher rate limits (5,000 requests/hour vs 60)</li>
-                      <li>Access organization repositories</li>
-                    </ul>
                   </div>
                 </div>
               </div>
@@ -407,25 +536,25 @@ function App() {
           </div>
 
           {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+            <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 text-red-700 rounded-xl text-sm font-medium">
               {error}
             </div>
           )}
         </div>
 
         {treeData.length > 0 && (
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200/50 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4 pb-4 border-b-2 border-slate-100">
               <div className="flex items-center gap-2">
-                <FolderTree className="w-5 h-5 text-slate-600" />
-                <h2 className="text-lg font-semibold text-slate-800">
+                <FolderTree className="w-6 h-6 text-emerald-600" />
+                <h2 className="text-xl font-black text-slate-800">
                   Repository Structure
                 </h2>
-                <span className="text-sm text-slate-500">
+                <span className="text-sm text-slate-500 font-semibold">
                   ({treeData.length} items)
                 </span>
                 {isPrivateRepo && (
-                  <span className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded-full">
+                  <span className="flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-700 text-xs rounded-full font-bold">
                     <Lock className="w-3 h-3" />
                     Private
                   </span>
@@ -433,11 +562,11 @@ function App() {
               </div>
               <button
                 onClick={() => copyToClipboard(formatTreeAsText(), 'all')}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors flex items-center gap-2 shadow-sm"
               >
                 {copiedPath === 'all' ? (
                   <>
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-emerald-600" />
                     Copied!
                   </>
                 ) : (
@@ -449,63 +578,93 @@ function App() {
               </button>
             </div>
 
-            <div className="max-h-[600px] overflow-y-auto bg-slate-50 rounded-lg p-4">
+            <div className="max-h-[600px] overflow-y-auto bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-4 border-2 border-slate-200">
               <TreeView />
             </div>
           </div>
         )}
 
+        {exportOutput && (
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200/50 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileText className="w-6 h-6 text-emerald-600" />
+                <h2 className="text-xl font-black text-slate-800">Exported Files</h2>
+              </div>
+              <button
+                onClick={() => copyToClipboard(exportOutput, 'export')}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-xl flex items-center gap-2"
+              >
+                {copiedPath === 'export' ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    Copy to Clipboard
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="max-h-[400px] overflow-y-auto bg-slate-900 rounded-xl p-4 font-mono text-sm text-emerald-400 whitespace-pre-wrap border-2 border-slate-700">
+              {exportOutput}
+            </div>
+          </div>
+        )}
+
         <div className="mt-8 grid md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-              <span className="text-2xl">📖</span>
+          <div className="bg-gradient-to-br from-white to-emerald-50/50 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/50 p-6">
+            <h3 className="text-xl font-black text-slate-800 mb-4 flex items-center gap-2">
+              <span className="text-3xl">📖</span>
               How to Use
             </h3>
-            <ol className="space-y-3 text-slate-600">
+            <ol className="space-y-3 text-slate-700">
               <li className="flex gap-3">
-                <span className="font-bold text-blue-600 flex-shrink-0">1.</span>
-                <span>Enter repository in <code className="px-1.5 py-0.5 bg-slate-100 rounded text-sm">username/repo</code> format</span>
+                <span className="font-black text-emerald-600 flex-shrink-0">1.</span>
+                <span>Enter repository as <code className="px-2 py-1 bg-slate-100 rounded-lg text-sm font-mono">username/repo</code></span>
               </li>
               <li className="flex gap-3">
-                <span className="font-bold text-blue-600 flex-shrink-0">2.</span>
-                <span>Specify branch name (defaults to main)</span>
+                <span className="font-black text-emerald-600 flex-shrink-0">2.</span>
+                <span>Specify branch (defaults to main)</span>
               </li>
               <li className="flex gap-3">
-                <span className="font-bold text-blue-600 flex-shrink-0">3.</span>
-                <span><strong>Optional:</strong> Add your Personal Access Token for private repos</span>
+                <span className="font-black text-emerald-600 flex-shrink-0">3.</span>
+                <span><strong>Optional:</strong> Add PAT for private repos</span>
               </li>
               <li className="flex gap-3">
-                <span className="font-bold text-blue-600 flex-shrink-0">4.</span>
+                <span className="font-black text-emerald-600 flex-shrink-0">4.</span>
                 <span>Click <strong>Fetch</strong> to load structure</span>
               </li>
               <li className="flex gap-3">
-                <span className="font-bold text-blue-600 flex-shrink-0">5.</span>
-                <span>Hover to copy paths or use <strong>Copy Tree</strong></span>
+                <span className="font-black text-emerald-600 flex-shrink-0">5.</span>
+                <span>Select files and <strong>Generate Export</strong> to get contents</span>
               </li>
             </ol>
           </div>
 
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-              <span className="text-2xl">💡</span>
-              Use Cases
+          <div className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/50 p-6">
+            <h3 className="text-xl font-black text-slate-800 mb-4 flex items-center gap-2">
+              <span className="text-3xl">✨</span>
+              Features
             </h3>
-            <ul className="space-y-3 text-slate-600">
+            <ul className="space-y-3 text-slate-700">
               <li className="flex gap-3">
-                <span className="text-blue-600 flex-shrink-0">•</span>
-                <span><strong>Quick Overview:</strong> Understand repository organization instantly</span>
+                <span className="text-emerald-600 flex-shrink-0 font-black">•</span>
+                <span><strong>Tree View:</strong> Visual directory structure</span>
               </li>
               <li className="flex gap-3">
-                <span className="text-blue-600 flex-shrink-0">•</span>
-                <span><strong>Private Repos:</strong> Access your private repositories with PAT</span>
+                <span className="text-emerald-600 flex-shrink-0 font-black">•</span>
+                <span><strong>File Export:</strong> Extract multiple file contents</span>
               </li>
               <li className="flex gap-3">
-                <span className="text-blue-600 flex-shrink-0">•</span>
-                <span><strong>Documentation:</strong> Generate directory structures for docs</span>
+                <span className="text-emerald-600 flex-shrink-0 font-black">•</span>
+                <span><strong>Private Repos:</strong> Access with PAT authentication</span>
               </li>
               <li className="flex gap-3">
-                <span className="text-blue-600 flex-shrink-0">•</span>
-                <span><strong>Collaboration:</strong> Share file paths with team members</span>
+                <span className="text-emerald-600 flex-shrink-0 font-black">•</span>
+                <span><strong>Quick Copy:</strong> One-click path and content copying</span>
               </li>
             </ul>
           </div>
